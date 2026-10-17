@@ -153,7 +153,17 @@ async function resolveDirectStream({
 
     const html = await response.text();
     const play = extractInitialPlay(html);
-
+console.log("Zenix diagnostic HTML :", {
+  status: response.status,
+  urlFinale: response.url,
+  longueurHTML: html.length,
+  contientInitialPlay: html.includes("INITIAL_PLAY"),
+  contientEmbedPlayer: html.includes("embed-player"),
+  debutHTML: html.slice(0, 1800),
+  declarationsInitialPlay: [
+    ...html.matchAll(/INITIAL_PLAY/g)
+  ].length
+});
     console.log("Zenix INITIAL_PLAY :", {
       present: Boolean(play),
       ok: play?.ok,
