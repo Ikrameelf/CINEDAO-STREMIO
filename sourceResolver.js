@@ -5,8 +5,18 @@ const UA =
 const DEBUG = process.env.DEBUG_ZENIX === "1";
 const MAX_DEPTH = 3;
 
+let trace = [];
+
 function log(...args) {
-  if (DEBUG) console.log("[Zenix]", ...args);
+  const line = args
+    .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
+    .join(" ");
+  trace.push(line);
+  if (DEBUG) console.log("[Zenix]", line);
+}
+
+function getTrace() {
+  return trace.slice();
 }
 
 function normalizeUrl(value, baseUrl = ZENIX_HOST) {
@@ -216,6 +226,7 @@ async function crawl(url, referer, depth, seen) {
 
 async function resolveDirectStream({ tmdbId, season, episode }) {
   try {
+        trace = [];
     const params = new URLSearchParams({
       tmdb: String(tmdbId),
       type: "tv",
@@ -244,7 +255,12 @@ async function resolveDirectStream({ tmdbId, season, episode }) {
     const html = await response.text();
     const finalPage = response.url || pageUrl;
     const play = extractInitialPlay(html);
-
+    log(
+      "Embed HTML :",
+      html.length,
+      "caractères, début :",
+      html.slice(0, 400).replace(/\s+/g, " ")
+    );
     log("INITIAL_PLAY :", {
       present: Boolean(play),
       ok: play?.ok,
@@ -307,5 +323,6 @@ async function resolveDirectStream({ tmdbId, season, episode }) {
 
 module.exports = {
   isDirectVideoUrl,
-  resolveDirectStream
+  resolveDirectStream,
+  getTrace
 };
