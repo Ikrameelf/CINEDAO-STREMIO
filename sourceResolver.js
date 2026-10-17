@@ -69,6 +69,26 @@ async function verifyMediaUrl(url) {
 
     const html = await response.text();
 
+console.log("Zenix occurrences INITIAL_PLAY :", 
+  [...html.matchAll(/INITIAL_PLAY/g)]
+    .slice(0, 10)
+    .map(match => html.slice(
+      Math.max(0, match.index - 180),
+      Math.min(html.length, match.index + 450)
+    ))
+);
+
+console.log("Zenix références lecteur :", 
+  [...html.matchAll(
+    /(?:iframe|stream_url|embed-stream|hls-proxy|\.m3u8|\.mp4)/gi
+  )]
+    .slice(0, 20)
+    .map(match => html.slice(
+      Math.max(0, match.index - 100),
+      Math.min(html.length, match.index + 250)
+    ))
+);
+
     console.log("Zenix HTML de stream_url :", {
       status: response.status,
       contentType,
