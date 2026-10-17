@@ -122,16 +122,20 @@ async function resolveId(type, id) {
   return null;
 }
 
+
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
   try {
-    const search = extra?.search?.trim();
+    const search = String(extra?.search || "").trim();
     let data;
 
     if (search) {
-      data = await tmdb("/search/multi", {
+      const endpoint =
+        type === "series" ? "/search/tv" : "/search/movie";
+
+      data = await tmdb(endpoint, {
         query: search,
-        include_adult: false,
-        page: 1
+        page: 1,
+        include_adult: false
       });
     } else if (type === "movie" && id === "cinema_movies") {
       data = await tmdb("/trending/movie/week");
@@ -141,26 +145,15 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
       return { metas: [] };
     }
 
-    const expectedMediaType = type === "series" ? "tv" : "movie";
-
     const metas = (data.results || [])
-      .filter((item) => {
-        if (!item.id || !item.poster_path) return false;
-
-        if (search) {
-          return item.media_type === expectedMediaType;
-        }
-
-        if (type === "movie") {
-          return item.media_type === "movie" ||
-            item.title !== undefined;
-        }
-
-        return item.media_type === "tv" ||
-          item.name !== undefined;
-      })
+      .filter((item) => item.id && item.poster_path)
       .slice(0, 30)
       .map((item) => toMeta(item, type));
+
+    console.log(
+      "Recherche catalogue :",
+      { type, search, resultats: metas.length }
+    );
 
     return { metas };
   } catch (error) {
