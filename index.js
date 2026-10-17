@@ -125,8 +125,9 @@ async function resolveId(type, id) {
 
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
   try {
-    const search = String(extra?.search || "").trim();
-    let data;
+const search = String(extra?.search || "")
+  .replace(/\.json.*$/i, "")
+  .trim();    let data;
 
     if (search) {
       const endpoint =
