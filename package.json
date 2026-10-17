@@ -1,0 +1,17 @@
+
+{
+  "name": "cinema-addon",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Addon Stremio avec catalogue, recherche et sources modulaires",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "stremio-addon-sdk": "^1.6.10"
+  }
+}
