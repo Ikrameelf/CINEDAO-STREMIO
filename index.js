@@ -279,35 +279,28 @@ builder.defineStreamHandler(async ({ type, id }) => {
       tmdbId = resolved.tmdbId;
     }
 
-    // Facultatif : modèle d'URL directe provenant d'une source
-    // que tu contrôles et autorisée à fournir cette vidéo.
-    const directTemplate = process.env.DIRECT_STREAM_TEMPLATE;
+// Recherche un flux direct exposé par la page Zenix.
+const directStream = await resolveDirectStream({
+  tmdbId,
+  season,
+  episode
+});
 
-    if (directTemplate) {
-      const directUrl = directTemplate
-        .replaceAll("{tmdb}", encodeURIComponent(tmdbId))
-        .replaceAll("{season}", String(season))
-        .replaceAll("{episode}", String(episode));
+if (directStream?.url) {
+  console.log("Zenix : flux direct détecté.");
 
-      try {
-        const parsedUrl = new URL(directUrl);
-        const validProtocol = parsedUrl.protocol === "https:";
-        const validExtension = /\.(m3u8|mp4)$/i.test(parsedUrl.pathname);
+  return {
+    streams: [{
+      name: directStream.name,
+      description: directStream.description,
+      url: directStream.url
+    }]
+  };
+}
 
-        if (validProtocol && validExtension) {
-          return {
-            streams: [{
-              name: "Source directe",
-              description: `S${season}E${episode}`,
-              url: directUrl
-            }]
-          };
-        }
-      } catch {
-        console.error("Modèle d'URL directe invalide.");
-      }
-    }
-
+console.log(
+  "Zenix Resolver : aucun flux direct trouvé dans le HTML accessible."
+);
     // Vérifie la disponibilité VF avant de proposer le lecteur Zenix.
     const availabilityUrl = new URL(
       "https://fluxora.sbs/api/embed-player/availability"
