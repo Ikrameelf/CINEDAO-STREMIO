@@ -5,14 +5,13 @@ const TMDB_KEY = process.env.TMDB_API_KEY;
 const PORT = process.env.PORT || 10000;
 const TMDB = "https://api.themoviedb.org/3";
 const IMG = "https://image.tmdb.org/t/p/w500";
+const BACKDROP = "https://image.tmdb.org/t/p/w1280";
 
 const manifest = {
   id: "fr.cinema.addon",
-  version: "1.0.0",
+  version: "1.1.0",
   name: "Cinema Addon",
-  description:
-    "Catalogue, recherche et sources vidéo modulaires.",
-  logo: "",
+  description: "Catalogue, recherche et sources modulaires.",
   resources: ["catalog", "meta", "stream"],
   types: ["movie", "series"],
   catalogs: [
@@ -35,7 +34,7 @@ const builder = new addonBuilder(manifest);
 
 async function tmdb(path, params = {}) {
   if (!TMDB_KEY) {
-    throw new Error("TMDB_API_KEY manquante dans Render");
+    throw new Error("TMDB_API_KEY absente dans Render");
   }
 
   const url = new URL(TMDB + path);
@@ -57,25 +56,70 @@ async function tmdb(path, params = {}) {
   return response.json();
 }
 
-function toMeta(item, type) {
-  const isMovie = type === "movie";
-
+function toMeta(item, type, idOverride) {
   return {
-    id: `tmdb:${isMovie ? "movie" : "tv"}:${item.id}`,
+    id: idOverride ||
+      `tmdb:${type === "movie" ? "movie" : "tv"}:${item.id}`,
     type,
     name: item.title || item.name || "Sans titre",
     poster: item.poster_path
       ? IMG + item.poster_path
       : undefined,
     background: item.backdrop_path
-      ? "https://image.tmdb.org/t/p/w1280" +
-        item.backdrop_path
+      ? BACKDROP + item.backdrop_path
       : undefined,
     description: item.overview || "",
     releaseInfo: (
       item.release_date || item.first_air_date || ""
     ).slice(0, 4)
   };
+}
+
+// Accepte les IDs TMDB et les IDs IMDb.
+async function resolveId(type, id) {
+  const tmdbMatch =
+    /^tmdb:(movie|tv):(\d+)$/.exec(String(id));
+
+  if (tmdbMatch) {
+    const kind = tmdbMatch[1];
+    const tmdbId = tmdbMatch[2];
+
+    if (
+      (type === "movie" && kind !== "movie") ||
+      (type === "series" && kind !== "tv")
+    ) {
+      return null;
+    }
+
+    return {
+      kind,
+      tmdbId,
+      imdbId: null
+    };
+  }
+
+  if (/^tt\d+$/.test(String(id))) {
+    const found = await tmdb(`/find/${id}`, {
+      external_source: "imdb_id"
+    });
+
+    const kind = type === "movie" ? "movie" : "tv";
+    const results = kind === "movie"
+      ? found.movie_results
+      : found.tv_results;
+
+    if (!results || !results.length) {
+      return null;
+    }
+
+    return {
+      kind,
+      tmdbId: String(results[0].id),
+      imdbId: id
+    };
+  }
+
+  return null;
 }
 
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
@@ -97,20 +141,21 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
       return { metas: [] };
     }
 
+    const expectedMediaType = type === "series" ? "tv" : "movie";
+
     const metas = (data.results || [])
       .filter((item) => {
+        if (!item.id || !item.poster_path) return false;
+
         if (search) {
-          return item.media_type === type;
+          return item.media_type === expectedMediaType;
         }
-        return true;
-      })
-      .filter((item) => {
-        if (!item.id) return false;
-        if (!item.poster_path) return false;
+
         if (type === "movie") {
           return item.media_type === "movie" ||
             item.title !== undefined;
         }
+
         return item.media_type === "tv" ||
           item.name !== undefined;
       })
@@ -126,25 +171,30 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
 
 builder.defineMetaHandler(async ({ type, id }) => {
   try {
-    const match = /^tmdb:(movie|tv):(\d+)$/.exec(id);
+    const resolved = await resolveId(type, id);
 
-    if (!match) return { meta: null };
-
-    const kind = match[1];
-    const tmdbId = match[2];
-
-    if (
-      (type === "movie" && kind !== "movie") ||
-      (type === "series" && kind !== "tv")
-    ) {
+    if (!resolved) {
       return { meta: null };
     }
 
+    const { kind, tmdbId, imdbId } = resolved;
     const endpoint = kind === "movie" ? "movie" : "tv";
+
     const item = await tmdb(`/${endpoint}/${tmdbId}`);
 
+    let canonicalImdbId = imdbId;
+
+    if (kind === "tv" && !canonicalImdbId) {
+      try {
+        const external = await tmdb(`/tv/${tmdbId}/external_ids`);
+        canonicalImdbId = external.imdb_id || null;
+      } catch (error) {
+        console.error("IMDb ID indisponible :", error.message);
+      }
+    }
+
     const meta = {
-      ...toMeta(item, type),
+      ...toMeta(item, type, id),
       genres: (item.genres || []).map((genre) => genre.name),
       runtime: item.runtime || undefined,
       videos: []
@@ -152,11 +202,15 @@ builder.defineMetaHandler(async ({ type, id }) => {
 
     if (kind === "tv") {
       const seasons = (item.seasons || [])
-        .filter((season) => season.season_number > 0)
-        .slice(0, 10);
+        .filter((season) => season.season_number > 0);
+
+      // Les épisodes sont chargés à la demande, saison par saison.
+      // Pour éviter de dépasser les limites, on ne charge ici
+      // que les dix premières saisons.
+      const selectedSeasons = seasons.slice(0, 10);
 
       const seasonResults = await Promise.all(
-        seasons.map(async (season) => {
+        selectedSeasons.map(async (season) => {
           try {
             return await tmdb(
               `/tv/${tmdbId}/season/${season.season_number}`
@@ -174,16 +228,20 @@ builder.defineMetaHandler(async ({ type, id }) => {
 
       for (const season of seasonResults) {
         for (const episode of season.episodes || []) {
+          const episodeId = canonicalImdbId
+            ? `${canonicalImdbId}:${episode.season_number}:${episode.episode_number}`
+            : `tmdb:tv:${tmdbId}:${episode.season_number}:${episode.episode_number}`;
+
           meta.videos.push({
-            id: `tmdb:tv:${tmdbId}:${episode.season_number}:${episode.episode_number}`,
-            title: episode.name || `Épisode ${episode.episode_number}`,
+            id: episodeId,
+            title: episode.name ||
+              `Épisode ${episode.episode_number}`,
             season: episode.season_number,
             episode: episode.episode_number,
             released: episode.air_date || undefined,
             overview: episode.overview || undefined,
             thumbnail: episode.still_path
-              ? "https://image.tmdb.org/t/p/w500" +
-                episode.still_path
+              ? IMG + episode.still_path
               : undefined
           });
         }
@@ -200,20 +258,40 @@ builder.defineMetaHandler(async ({ type, id }) => {
 builder.defineStreamHandler(async ({ type, id }) => {
   console.log("Demande de flux :", type, id);
 
-  const parts = String(id).split(":");
+  const value = String(id);
+  let parsed = null;
 
-  if (type === "series" && parts.length >= 3) {
-    const episodeId = parts[0];
-    const season = Number(parts[1]);
-    const episode = Number(parts[2]);
+  // Format IMDb : tt1234567:1:2
+  const imdbEpisode = /^(tt\d+):(\d+):(\d+)$/.exec(value);
 
-    console.log("Épisode demandé :", {
-      episodeId,
-      season,
-      episode
-    });
+  // Format interne : tmdb:tv:123:1:2
+  const tmdbEpisode =
+    /^tmdb:tv:(\d+):(\d+):(\d+)$/.exec(value);
+
+  if (type === "series" && imdbEpisode) {
+    parsed = {
+      sourceId: imdbEpisode[1],
+      season: Number(imdbEpisode[2]),
+      episode: Number(imdbEpisode[3]),
+      idType: "imdb"
+    };
+  } else if (type === "series" && tmdbEpisode) {
+    parsed = {
+      sourceId: tmdbEpisode[1],
+      season: Number(tmdbEpisode[2]),
+      episode: Number(tmdbEpisode[3]),
+      idType: "tmdb"
+    };
   }
 
+  if (parsed) {
+    console.log("Épisode analysé :", parsed);
+  } else {
+    console.log("Format de flux non reconnu :", value);
+  }
+
+  // Aucun flux n'est annoncé tant qu'une source compatible
+  // et autorisée n'a pas été vérifiée.
   return { streams: [] };
 });
 
