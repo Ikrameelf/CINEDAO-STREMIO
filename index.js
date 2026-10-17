@@ -330,7 +330,23 @@ builder.defineStreamHandler(async ({ type, id }) => {
       season: String(season),
       episode: String(episode)
     });
-
+    // TEST TEMPORAIRE : lien collé à la main, expire en ~4 h
+    if (season === 1 && episode === 3) {
+      streams.unshift({
+        name: "Test direct",
+        description: "HLS — test lecteur interne",
+        url: "https://u14.vidzy.cc/hls2/05/00022/fzex847zhc9o_n/index-v1-a1.m3u8?t=cWhMCD__EdGwvrrVkvoJxuzkmPBWAWPiH_rhwv1eu4E&s=1792255643&e=14400&f=111416&i=0.0&sp=0",
+        behaviorHints: {
+          notWebReady: true,
+          proxyHeaders: {
+            request: {
+              Referer: "https://fluxora.sbs/",
+              "User-Agent": "Mozilla/5.0"
+            }
+          }
+        }
+      });
+    }
     streams.push({
       name: "Zenix (navigateur)",
       description: `${vfConfirmee ? "VF confirmée" : "Disponibilité à vérifier"} — S${season}E${episode} — lecteur externe`,
