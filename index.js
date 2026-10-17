@@ -250,25 +250,24 @@ builder.defineMetaHandler(async ({ type, id }) => {
 });
 
 
+
 builder.defineStreamHandler(async ({ type, id }) => {
   console.log("Demande de flux :", type, id);
+
+  if (type !== "series") {
+    return { streams: [] };
+  }
 
   const value = String(id);
   const imdbEpisode = /^(tt\d+):(\d+):(\d+)$/.exec(value);
   const tmdbEpisode =
     /^tmdb:tv:(\d+):(\d+):(\d+)$/.exec(value);
 
-  let sourceId;
   let season;
   let episode;
   let tmdbId;
 
-  if (type !== "series") {
-    return { streams: [] };
-  }
-
   if (imdbEpisode) {
-    sourceId = imdbEpisode[1];
     season = Number(imdbEpisode[2]);
     episode = Number(imdbEpisode[3]);
   } else if (tmdbEpisode) {
@@ -281,33 +280,58 @@ builder.defineStreamHandler(async ({ type, id }) => {
   }
 
   try {
-    const apiKey = process.env.TMDB_API_KEY;
-
     if (!tmdbId) {
-      if (!apiKey) {
-        throw new Error("TMDB_API_KEY absente");
-      }
-
-      const findUrl = new URL(
-        `https://api.themoviedb.org/3/find/${encodeURIComponent(sourceId)}`
+      const resolved = await resolveId(
+        "series",
+        imdbEpisode[1]
       );
 
-      findUrl.searchParams.set("external_source", "imdb_id");
-      findUrl.searchParams.set("api_key", apiKey);
-
-      const response = await fetch(findUrl);
-
-      if (!response.ok) {
-        throw new Error(`TMDB Find HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-      tmdbId = String(data.tv_results?.[0]?.id || "");
-
-      if (!tmdbId) {
-        console.log("Série introuvable sur TMDB :", sourceId);
+      if (!resolved) {
+        console.log("Série introuvable sur TMDB :", imdbEpisode[1]);
         return { streams: [] };
       }
+
+      tmdbId = resolved.tmdbId;
+    }
+
+    const availabilityUrl = new URL(
+      "https://fluxora.sbs/api/embed-player/availability"
+    );
+
+    availabilityUrl.searchParams.set("tmdb", tmdbId);
+    availabilityUrl.searchParams.set("type", "tv");
+    availabilityUrl.searchParams.set("season", String(season));
+    availabilityUrl.searchParams.set("episode", String(episode));
+
+    const response = await fetch(availabilityUrl, {
+      signal: AbortSignal.timeout(10000)
+    });
+
+    if (!response.ok) {
+      throw new Error(`Zenix Availability HTTP ${response.status}`);
+    }
+
+    const availability = await response.json();
+
+    console.log("Disponibilité Zenix :", {
+      tmdbId,
+      season,
+      episode,
+      available: availability.available,
+      vf: availability.vf,
+      pending: availability.pending
+    });
+
+    // En cas de vérification incomplète ou d'indisponibilité,
+    // ne pas proposer Zenix.
+    if (
+      availability.ok !== true ||
+      availability.available !== true ||
+      availability.vf !== true ||
+      availability.pending === true
+    ) {
+      console.log("Zenix non proposé : VF non confirmée.");
+      return { streams: [] };
     }
 
     const params = new URLSearchParams({
@@ -317,6 +341,29 @@ builder.defineStreamHandler(async ({ type, id }) => {
       season: String(season),
       episode: String(episode)
     });
+
+    const externalUrl =
+      `https://fluxora.sbs/embed/zenix?${params.toString()}`;
+
+    return {
+      streams: [
+        {
+          name: "Zenix",
+          description:
+            `VF confirmée — S${season}E${episode} — lecteur externe`,
+          externalUrl
+        }
+      ]
+    };
+  } catch (error) {
+    console.error(
+      "Erreur de vérification Zenix :",
+      error.message
+    );
+
+    return { streams: [] };
+  }
+});
 
     const externalUrl =
       `https://fluxora.sbs/embed/zenix?${params.toString()}`;
