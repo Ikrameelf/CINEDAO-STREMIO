@@ -261,6 +261,24 @@ async function resolveDirectStream({ tmdbId, season, episode }) {
       "caractères, début :",
       html.slice(0, 400).replace(/\s+/g, " ")
     );
+        const snip = (re, n, before = 60, after = 160) =>
+      [...html.matchAll(re)]
+        .slice(0, n)
+        .map((m) =>
+          html
+            .slice(
+              Math.max(0, m.index - before),
+              Math.min(html.length, m.index + after)
+            )
+            .replace(/\s+/g, " ")
+        );
+
+    log("INITIAL_PLAY occurrences :", snip(/INITIAL_PLAY/g, 3));
+    log("iframes :", findIframes(html, finalPage));
+    log("scripts :", findScripts(html, finalPage));
+    log("api :", snip(/\/api\/[a-z0-9_\-\/]*/gi, 8, 30, 120));
+    log("m3u8/mp4 :", snip(/\.(?:m3u8|mp4)/gi, 4));
+    log("fetch :", snip(/fetch\(/g, 5, 40, 200));
     log("INITIAL_PLAY :", {
       present: Boolean(play),
       ok: play?.ok,
