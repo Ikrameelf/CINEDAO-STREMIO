@@ -249,45 +249,96 @@ builder.defineMetaHandler(async ({ type, id }) => {
   }
 });
 
+
 builder.defineStreamHandler(async ({ type, id }) => {
   console.log("Demande de flux :", type, id);
 
   const value = String(id);
-  let parsed = null;
-
-  // Format IMDb : tt1234567:1:2
   const imdbEpisode = /^(tt\d+):(\d+):(\d+)$/.exec(value);
-
-  // Format interne : tmdb:tv:123:1:2
   const tmdbEpisode =
     /^tmdb:tv:(\d+):(\d+):(\d+)$/.exec(value);
 
-  if (type === "series" && imdbEpisode) {
-    parsed = {
-      sourceId: imdbEpisode[1],
-      season: Number(imdbEpisode[2]),
-      episode: Number(imdbEpisode[3]),
-      idType: "imdb"
-    };
-  } else if (type === "series" && tmdbEpisode) {
-    parsed = {
-      sourceId: tmdbEpisode[1],
-      season: Number(tmdbEpisode[2]),
-      episode: Number(tmdbEpisode[3]),
-      idType: "tmdb"
-    };
+  let sourceId;
+  let season;
+  let episode;
+  let tmdbId;
+
+  if (type !== "series") {
+    return { streams: [] };
   }
 
-  if (parsed) {
-    console.log("Épisode analysé :", parsed);
+  if (imdbEpisode) {
+    sourceId = imdbEpisode[1];
+    season = Number(imdbEpisode[2]);
+    episode = Number(imdbEpisode[3]);
+  } else if (tmdbEpisode) {
+    tmdbId = tmdbEpisode[1];
+    season = Number(tmdbEpisode[2]);
+    episode = Number(tmdbEpisode[3]);
   } else {
     console.log("Format de flux non reconnu :", value);
+    return { streams: [] };
   }
 
-  // Aucun flux n'est annoncé tant qu'une source compatible
-  // et autorisée n'a pas été vérifiée.
-  return { streams: [] };
+  try {
+    const apiKey = process.env.TMDB_API_KEY;
+
+    if (!tmdbId) {
+      if (!apiKey) {
+        throw new Error("TMDB_API_KEY absente");
+      }
+
+      const findUrl = new URL(
+        `https://api.themoviedb.org/3/find/${encodeURIComponent(sourceId)}`
+      );
+
+      findUrl.searchParams.set("external_source", "imdb_id");
+      findUrl.searchParams.set("api_key", apiKey);
+
+      const response = await fetch(findUrl);
+
+      if (!response.ok) {
+        throw new Error(`TMDB Find HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      tmdbId = String(data.tv_results?.[0]?.id || "");
+
+      if (!tmdbId) {
+        console.log("Série introuvable sur TMDB :", sourceId);
+        return { streams: [] };
+      }
+    }
+
+    const params = new URLSearchParams({
+      tmdb: tmdbId,
+      type: "tv",
+      lang: "vf",
+      season: String(season),
+      episode: String(episode)
+    });
+
+    const externalUrl =
+      `https://fluxora.sbs/embed/zenix?${params.toString()}`;
+
+    console.log("Lien externe Zenix préparé :", externalUrl);
+
+    return {
+      streams: [
+        {
+          name: "TanaSecteur / Zenix",
+          description:
+            `Reminder — S${season}E${episode} — VF (lecteur externe)`,
+          externalUrl
+        }
+      ]
+    };
+  } catch (error) {
+    console.error("Erreur de résolution Zenix :", error.message);
+    return { streams: [] };
+  }
 });
+
 
 serveHTTP(builder.getInterface(), { port: PORT });
 console.log(`Cinema Addon démarré sur le port ${PORT}`);
