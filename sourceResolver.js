@@ -66,6 +66,26 @@ async function resolveDirectStream({ tmdbId, season, episode }) {
     }
 
     const html = await response.text();
+    for (const term of [
+  "INITIAL_PLAY",
+  "INITIAL_SOURCE_CHOICES",
+  "function syncSources",
+  "function nextSmartlinkUrl",
+  "hls-proxy.php",
+  "createElement('iframe')",
+  'createElement("iframe")'
+]) {
+  const index = html.indexOf(term);
+
+  console.log(
+    "ZENIX SOURCE DEBUG",
+    term,
+    index,
+    index >= 0
+      ? html.slice(Math.max(0, index - 300), index + 1800)
+      : "introuvable"
+  );
+}
     const candidates = extractCandidates(html, response.url);
 
     const iframeMatches = [
