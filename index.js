@@ -6,7 +6,7 @@ const PORT = process.env.PORT || 10000;
 const TMDB = "https://api.themoviedb.org/3";
 const IMG = "https://image.tmdb.org/t/p/w500";
 const BACKDROP = "https://image.tmdb.org/t/p/w1280";
-
+const { resolveDirectStream } = require("./sourceResolver");
 const manifest = {
   id: "fr.cinema.addon",
   version: "1.1.0",
