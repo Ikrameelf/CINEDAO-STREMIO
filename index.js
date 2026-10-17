@@ -1,6 +1,7 @@
 
 const { addonBuilder, serveHTTP } = require("stremio-addon-sdk");
 
+
 const TMDB_KEY = process.env.TMDB_API_KEY;
 const PORT = process.env.PORT || 10000;
 const TMDB = "https://api.themoviedb.org/3";
@@ -251,6 +252,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
 
 
 
+
 builder.defineStreamHandler(async ({ type, id }) => {
   console.log("Demande de flux :", type, id);
 
@@ -263,37 +265,58 @@ builder.defineStreamHandler(async ({ type, id }) => {
   const tmdbEpisode =
     /^tmdb:tv:(\d+):(\d+):(\d+)$/.exec(value);
 
-  let season;
-  let episode;
-  let tmdbId;
-
-  if (imdbEpisode) {
-    season = Number(imdbEpisode[2]);
-    episode = Number(imdbEpisode[3]);
-  } else if (tmdbEpisode) {
-    tmdbId = tmdbEpisode[1];
-    season = Number(tmdbEpisode[2]);
-    episode = Number(tmdbEpisode[3]);
-  } else {
+  if (!imdbEpisode && !tmdbEpisode) {
     console.log("Format de flux non reconnu :", value);
     return { streams: [] };
   }
 
+  const season = Number(
+    (imdbEpisode || tmdbEpisode)[2]
+  );
+  const episode = Number(
+    (imdbEpisode || tmdbEpisode)[3]
+  );
+
   try {
-    if (!tmdbId) {
+    let tmdbId;
+
+    if (tmdbEpisode) {
+      tmdbId = tmdbEpisode[1];
+    } else {
       const resolved = await resolveId(
         "series",
         imdbEpisode[1]
       );
 
       if (!resolved) {
-        console.log("Série introuvable sur TMDB :", imdbEpisode[1]);
         return { streams: [] };
       }
 
       tmdbId = resolved.tmdbId;
     }
 
+    // Option facultative : URL directe fournie par une source
+    // que tu contrôles et qui autorise son utilisation.
+    const directUrl = process.env.DIRECT_STREAM_TEMPLATE;
+
+    if (directUrl) {
+      const url = directUrl
+        .replaceAll("{tmdb}", encodeURIComponent(tmdbId))
+        .replaceAll("{season}", String(season))
+        .replaceAll("{episode}", String(episode));
+
+      if (/^https:\/\/.+\.(m3u8|mp4)(\?.*)?$/i.test(url)) {
+        return {
+          streams: [{
+            name: "Source directe",
+            description: `S${season}E${episode}`,
+            url
+          }]
+        };
+      }
+    }
+
+    // Secours : vérification de disponibilité Zenix.
     const availabilityUrl = new URL(
       "https://fluxora.sbs/api/embed-player/availability"
     );
@@ -306,6 +329,44 @@ builder.defineStreamHandler(async ({ type, id }) => {
     const response = await fetch(availabilityUrl, {
       signal: AbortSignal.timeout(10000)
     });
+
+    if (!response.ok) {
+      throw new Error(`Zenix HTTP ${response.status}`);
+    }
+
+    const availability = await response.json();
+
+    if (
+      availability.ok !== true ||
+      availability.available !== true ||
+      availability.vf !== true ||
+      availability.pending === true
+    ) {
+      return { streams: [] };
+    }
+
+    const params = new URLSearchParams({
+      tmdb: tmdbId,
+      type: "tv",
+      lang: "vf",
+      season: String(season),
+      episode: String(episode)
+    });
+
+    return {
+      streams: [{
+        name: "Zenix",
+        description:
+          `VF confirmée — S${season}E${episode} — lecteur externe`,
+        externalUrl:
+          `https://fluxora.sbs/embed/zenix?${params.toString()}`
+      }]
+    };
+  } catch (error) {
+    console.error("Erreur de flux :", error.message);
+    return { streams: [] };
+  }
+});
 
     if (!response.ok) {
       throw new Error(`Zenix Availability HTTP ${response.status}`);
