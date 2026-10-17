@@ -365,27 +365,4 @@ builder.defineStreamHandler(async ({ type, id }) => {
   }
 });
 
-    const externalUrl =
-      `https://fluxora.sbs/embed/zenix?${params.toString()}`;
-
-    console.log("Lien externe Zenix préparé :", externalUrl);
-
-    return {
-      streams: [
-        {
-          name: "TanaSecteur / Zenix",
-          description:
-            `Reminder — S${season}E${episode} — VF (lecteur externe)`,
-          externalUrl
-        }
-      ]
-    };
-  } catch (error) {
-    console.error("Erreur de résolution Zenix :", error.message);
-    return { streams: [] };
-  }
-});
-
-
-serveHTTP(builder.getInterface(), { port: PORT });
 console.log(`Cinema Addon démarré sur le port ${PORT}`);
