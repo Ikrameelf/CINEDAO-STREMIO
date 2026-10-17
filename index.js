@@ -1,7 +1,6 @@
 
 const { addonBuilder, serveHTTP } = require("stremio-addon-sdk");
 
-
 const TMDB_KEY = process.env.TMDB_API_KEY;
 const PORT = process.env.PORT || 10000;
 const TMDB = "https://api.themoviedb.org/3";
@@ -63,9 +62,7 @@ function toMeta(item, type, idOverride) {
       `tmdb:${type === "movie" ? "movie" : "tv"}:${item.id}`,
     type,
     name: item.title || item.name || "Sans titre",
-    poster: item.poster_path
-      ? IMG + item.poster_path
-      : undefined,
+    poster: item.poster_path ? IMG + item.poster_path : undefined,
     background: item.backdrop_path
       ? BACKDROP + item.backdrop_path
       : undefined,
@@ -76,10 +73,9 @@ function toMeta(item, type, idOverride) {
   };
 }
 
-// Accepte les IDs TMDB et les IDs IMDb.
 async function resolveId(type, id) {
-  const tmdbMatch =
-    /^tmdb:(movie|tv):(\d+)$/.exec(String(id));
+  const value = String(id);
+  const tmdbMatch = /^tmdb:(movie|tv):(\d+)$/.exec(value);
 
   if (tmdbMatch) {
     const kind = tmdbMatch[1];
@@ -92,15 +88,11 @@ async function resolveId(type, id) {
       return null;
     }
 
-    return {
-      kind,
-      tmdbId,
-      imdbId: null
-    };
+    return { kind, tmdbId, imdbId: null };
   }
 
-  if (/^tt\d+$/.test(String(id))) {
-    const found = await tmdb(`/find/${id}`, {
+  if (/^tt\d+$/.test(value)) {
+    const found = await tmdb(`/find/${value}`, {
       external_source: "imdb_id"
     });
 
@@ -116,23 +108,25 @@ async function resolveId(type, id) {
     return {
       kind,
       tmdbId: String(results[0].id),
-      imdbId: id
+      imdbId: value
     };
   }
 
   return null;
 }
 
-
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
   try {
-const search = String(extra?.search || "")
-  .replace(/\.json.*$/i, "")
-  .trim();    let data;
+    const search = String(extra?.search || "")
+      .replace(/\.json.*$/i, "")
+      .trim();
+
+    let data;
 
     if (search) {
-      const endpoint =
-        type === "series" ? "/search/tv" : "/search/movie";
+      const endpoint = type === "series"
+        ? "/search/tv"
+        : "/search/movie";
 
       data = await tmdb(endpoint, {
         query: search,
@@ -152,10 +146,11 @@ const search = String(extra?.search || "")
       .slice(0, 30)
       .map((item) => toMeta(item, type));
 
-    console.log(
-      "Recherche catalogue :",
-      { type, search, resultats: metas.length }
-    );
+    console.log("Recherche catalogue :", {
+      type,
+      search,
+      resultats: metas.length
+    });
 
     return { metas };
   } catch (error) {
@@ -174,7 +169,6 @@ builder.defineMetaHandler(async ({ type, id }) => {
 
     const { kind, tmdbId, imdbId } = resolved;
     const endpoint = kind === "movie" ? "movie" : "tv";
-
     const item = await tmdb(`/${endpoint}/${tmdbId}`);
 
     let canonicalImdbId = imdbId;
@@ -197,15 +191,11 @@ builder.defineMetaHandler(async ({ type, id }) => {
 
     if (kind === "tv") {
       const seasons = (item.seasons || [])
-        .filter((season) => season.season_number > 0);
-
-      // Les épisodes sont chargés à la demande, saison par saison.
-      // Pour éviter de dépasser les limites, on ne charge ici
-      // que les dix premières saisons.
-      const selectedSeasons = seasons.slice(0, 10);
+        .filter((season) => season.season_number > 0)
+        .slice(0, 10);
 
       const seasonResults = await Promise.all(
-        selectedSeasons.map(async (season) => {
+        seasons.map(async (season) => {
           try {
             return await tmdb(
               `/tv/${tmdbId}/season/${season.season_number}`
@@ -250,9 +240,6 @@ builder.defineMetaHandler(async ({ type, id }) => {
   }
 });
 
-
-
-
 builder.defineStreamHandler(async ({ type, id }) => {
   console.log("Demande de flux :", type, id);
 
@@ -262,20 +249,20 @@ builder.defineStreamHandler(async ({ type, id }) => {
 
   const value = String(id);
   const imdbEpisode = /^(tt\d+):(\d+):(\d+)$/.exec(value);
-  const tmdbEpisode =
-    /^tmdb:tv:(\d+):(\d+):(\d+)$/.exec(value);
+  const tmdbEpisode = /^tmdb:tv:(\d+):(\d+):(\d+)$/.exec(value);
 
   if (!imdbEpisode && !tmdbEpisode) {
     console.log("Format de flux non reconnu :", value);
     return { streams: [] };
   }
 
-  const season = Number(
-    (imdbEpisode || tmdbEpisode)[2]
-  );
-  const episode = Number(
-    (imdbEpisode || tmdbEpisode)[3]
-  );
+  const match = imdbEpisode || tmdbEpisode;
+  const season = Number(match[2]);
+  const episode = Number(match[3]);
+
+  if (season < 0 || episode < 1) {
+    return { streams: [] };
+  }
 
   try {
     let tmdbId;
@@ -283,10 +270,7 @@ builder.defineStreamHandler(async ({ type, id }) => {
     if (tmdbEpisode) {
       tmdbId = tmdbEpisode[1];
     } else {
-      const resolved = await resolveId(
-        "series",
-        imdbEpisode[1]
-      );
+      const resolved = await resolveId("series", imdbEpisode[1]);
 
       if (!resolved) {
         return { streams: [] };
@@ -295,28 +279,36 @@ builder.defineStreamHandler(async ({ type, id }) => {
       tmdbId = resolved.tmdbId;
     }
 
-    // Option facultative : URL directe fournie par une source
-    // que tu contrôles et qui autorise son utilisation.
-    const directUrl = process.env.DIRECT_STREAM_TEMPLATE;
+    // Facultatif : modèle d'URL directe provenant d'une source
+    // que tu contrôles et autorisée à fournir cette vidéo.
+    const directTemplate = process.env.DIRECT_STREAM_TEMPLATE;
 
-    if (directUrl) {
-      const url = directUrl
+    if (directTemplate) {
+      const directUrl = directTemplate
         .replaceAll("{tmdb}", encodeURIComponent(tmdbId))
         .replaceAll("{season}", String(season))
         .replaceAll("{episode}", String(episode));
 
-      if (/^https:\/\/.+\.(m3u8|mp4)(\?.*)?$/i.test(url)) {
-        return {
-          streams: [{
-            name: "Source directe",
-            description: `S${season}E${episode}`,
-            url
-          }]
-        };
+      try {
+        const parsedUrl = new URL(directUrl);
+        const validProtocol = parsedUrl.protocol === "https:";
+        const validExtension = /\.(m3u8|mp4)$/i.test(parsedUrl.pathname);
+
+        if (validProtocol && validExtension) {
+          return {
+            streams: [{
+              name: "Source directe",
+              description: `S${season}E${episode}`,
+              url: directUrl
+            }]
+          };
+        }
+      } catch {
+        console.error("Modèle d'URL directe invalide.");
       }
     }
 
-    // Secours : vérification de disponibilité Zenix.
+    // Vérifie la disponibilité VF avant de proposer le lecteur Zenix.
     const availabilityUrl = new URL(
       "https://fluxora.sbs/api/embed-player/availability"
     );
@@ -329,44 +321,6 @@ builder.defineStreamHandler(async ({ type, id }) => {
     const response = await fetch(availabilityUrl, {
       signal: AbortSignal.timeout(10000)
     });
-
-    if (!response.ok) {
-      throw new Error(`Zenix HTTP ${response.status}`);
-    }
-
-    const availability = await response.json();
-
-    if (
-      availability.ok !== true ||
-      availability.available !== true ||
-      availability.vf !== true ||
-      availability.pending === true
-    ) {
-      return { streams: [] };
-    }
-
-    const params = new URLSearchParams({
-      tmdb: tmdbId,
-      type: "tv",
-      lang: "vf",
-      season: String(season),
-      episode: String(episode)
-    });
-
-    return {
-      streams: [{
-        name: "Zenix",
-        description:
-          `VF confirmée — S${season}E${episode} — lecteur externe`,
-        externalUrl:
-          `https://fluxora.sbs/embed/zenix?${params.toString()}`
-      }]
-    };
-  } catch (error) {
-    console.error("Erreur de flux :", error.message);
-    return { streams: [] };
-  }
-});
 
     if (!response.ok) {
       throw new Error(`Zenix Availability HTTP ${response.status}`);
@@ -383,8 +337,6 @@ builder.defineStreamHandler(async ({ type, id }) => {
       pending: availability.pending
     });
 
-    // En cas de vérification incomplète ou d'indisponibilité,
-    // ne pas proposer Zenix.
     if (
       availability.ok !== true ||
       availability.available !== true ||
@@ -403,27 +355,20 @@ builder.defineStreamHandler(async ({ type, id }) => {
       episode: String(episode)
     });
 
-    const externalUrl =
-      `https://fluxora.sbs/embed/zenix?${params.toString()}`;
-
     return {
-      streams: [
-        {
-          name: "Zenix",
-          description:
-            `VF confirmée — S${season}E${episode} — lecteur externe`,
-          externalUrl
-        }
-      ]
+      streams: [{
+        name: "Zenix",
+        description: `VF confirmée — S${season}E${episode} — lecteur externe`,
+        externalUrl: `https://fluxora.sbs/embed/zenix?${params.toString()}`
+      }]
     };
   } catch (error) {
-    console.error(
-      "Erreur de vérification Zenix :",
-      error.message
-    );
-
+    console.error("Erreur de flux :", error.message);
     return { streams: [] };
   }
 });
+
+const addonInterface = builder.getInterface();
+serveHTTP(builder.getInterface(), { port: PORT });
 
 console.log(`Cinema Addon démarré sur le port ${PORT}`);
