@@ -1,8 +1,27 @@
+
 const ZENIX_HOST = "https://fluxora.sbs";
+
+function normalizeUrl(value, baseUrl) {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  try {
+    const url = new URL(
+      value.replace(/\\\//g, "/").replace(/&amp;/g, "&"),
+      baseUrl
+    );
+
+    return url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
 
 function isDirectVideoUrl(value) {
   try {
     const url = new URL(value);
+
     return (
       url.protocol === "https:" &&
       /\.(mp4|m3u8)$/i.test(url.pathname)
@@ -12,37 +31,127 @@ function isDirectVideoUrl(value) {
   }
 }
 
-function extractCandidates(html, pageUrl) {
-  const candidates = new Set();
+function extractInitialPlay(html) {
+  const match = html.match(
+    /\bINITIAL_PLAY\s*=\s*(\{[\s\S]*?\}|null)\s*;/
+  );
 
-  const patterns = [
-    /https?:\\?\/\\?\/[^"'\\\s<>]+?\.(?:mp4|m3u8)(?:\?[^"'\\\s<>]*)?/gi,
-    /["'](?:file|src|url|streamUrl|videoUrl)["']\s*:\s*["']([^"']+)["']/gi
-  ];
-
-  for (const pattern of patterns) {
-    for (const match of html.matchAll(pattern)) {
-      const raw = (match[1] || match[0])
-        .replace(/\\\//g, "/")
-        .replace(/&amp;/g, "&")
-        .replace(/\\u0026/g, "&");
-
-      try {
-        const absolute = new URL(raw, pageUrl).href;
-        if (isDirectVideoUrl(absolute)) {
-          candidates.add(absolute);
-        }
-      } catch {
-        // Ignore les URL invalides.
-      }
-    }
+  if (!match || match[1] === "null") {
+    return null;
   }
 
-  return [...candidates];
+  try {
+    return JSON.parse(match[1]);
+  } catch (error) {
+    console.log(
+      "Zenix : INITIAL_PLAY JSON invalide :",
+      error.message
+    );
+    return null;
+  }
 }
 
-async function resolveDirectStream({ tmdbId, season, episode }) {
+async function verifyMediaUrl(url) {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        "Range": "bytes=0-1023"
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(8000)
+    });
+
+    if (!response.ok) {
+      console.log(
+        "Zenix : vérification du flux HTTP",
+        response.status
+      );
+      await response.body?.cancel();
+      return false;
+    }
+
+    const contentType = (
+      response.headers.get("content-type") || ""
+    ).toLowerCase();
+
+    const reader = response.body?.getReader();
+
+    if (!reader) {
+      return false;
+    }
+
+    const chunks = [];
+    let total = 0;
+
+    try {
+      while (total < 1024) {
+        const { done, value } = await reader.read();
+
+        if (done) break;
+
+        chunks.push(value);
+        total += value.length;
+      }
+    } finally {
+      await reader.cancel().catch(() => {});
+    }
+
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+
+    const beginning = new TextDecoder()
+      .decode(bytes)
+      .trimStart();
+
+    const isHls =
+      beginning.startsWith("#EXTM3U") ||
+      contentType.includes("mpegurl");
+
+    const isMp4 =
+      contentType.includes("video/mp4") ||
+      (
+        bytes.length >= 8 &&
+        String.fromCharCode(...bytes.slice(4, 8)) === "ftyp"
+      );
+
+    const isVideoContentType =
+      contentType.startsWith("video/");
+
+    const verified = isHls || isMp4 || isVideoContentType;
+
+    console.log("Zenix : résultat vérification média", {
+      status: response.status,
+      contentType,
+      isHls,
+      isMp4,
+      isVideoContentType,
+      verified
+    });
+
+    return verified;
+  } catch (error) {
+    console.log(
+      "Zenix : vérification média impossible :",
+      error.message
+    );
+
+    return false;
+  }
+}
+
+async function resolveDirectStream({
+  tmdbId,
+  season,
+  episode
+}) {
   const pageUrl = new URL("/embed/zenix", ZENIX_HOST);
+
   pageUrl.searchParams.set("tmdb", String(tmdbId));
   pageUrl.searchParams.set("type", "tv");
   pageUrl.searchParams.set("lang", "vf");
@@ -60,131 +169,53 @@ async function resolveDirectStream({ tmdbId, season, episode }) {
     });
 
     if (!response.ok) {
-      console.log("Zenix Resolver : HTTP", response.status);
+      console.log("Zenix : page HTTP", response.status);
       return null;
     }
 
     const html = await response.text();
+    const play = extractInitialPlay(html);
 
-const playMatch = html.match(/\bINITIAL_PLAY\s*=\s*(\{[\s\S]*?\})\s*;/);
-
-if (playMatch) {
-  try {
-    const play = JSON.parse(playMatch[1]);
-
-    console.log("ZENIX INITIAL_PLAY :", {
-      ok: play.ok,
-      mode: play.mode,
-      provider: play.provider,
-      source: play.source,
-      lang: play.lang,
-      stream_url: play.stream_url,
-      sources: play.sources
+    console.log("Zenix INITIAL_PLAY :", {
+      present: Boolean(play),
+      ok: play?.ok,
+      mode: play?.mode,
+      provider: play?.provider,
+      source: play?.source,
+      lang: play?.lang,
+      hasStreamUrl: Boolean(play?.stream_url)
     });
-  } catch (error) {
-    console.log("ZENIX INITIAL_PLAY : JSON invalide", error.message);
-  }
-} else {
-  console.log("ZENIX INITIAL_PLAY : introuvable");
-}
 
-for (const term of [
-  "frame.src",
-  "frame.setAttribute",
-  "INITIAL_SOURCE_STREAMS",
-  "api/embed-player/",
-  "function syncSources"
-]) {
-  const index = html.indexOf(term);
-
-  console.log(
-    "ZENIX INIT",
-    term,
-    index,
-    index >= 0
-      ? html.slice(Math.max(0, index - 700), index + 2500)
-      : "introuvable"
-  );
-}
-
-    // Diagnostic des éléments du lecteur et des sources.
-    const iframeMatches = [
-      ...html.matchAll(/<iframe\b[^>]*>/gi)
-    ].map(match => match[0]);
-
-    console.log("ZENIX IFRAMES COMPLETS :", iframeMatches);
-
-    for (const term of [
-      "INITIAL_PLAY",
-      "INITIAL_SOURCE_CHOICES",
-      "function syncSources",
-      "zx-frame"
-    ]) {
-      const index = html.indexOf(term);
-
+    if (!play?.ok || !play.stream_url) {
       console.log(
-        "ZENIX SOURCE DEBUG",
-        term,
-        index,
-        index >= 0
-          ? html.slice(Math.max(0, index - 300), index + 1800)
-          : "introuvable"
+        "Zenix : aucun flux initial fourni pour cet épisode."
       );
+      return null;
     }
 
-    console.log("ZENIX HTML DEBUG :", {
-      length: html.length,
-      hasVideo: /<video\b/i.test(html),
-      hasIframe: /<iframe\b/i.test(html),
-      hasM3u8: /\.m3u8/i.test(html),
-      hasMp4: /\.mp4/i.test(html)
-    });
+    const streamUrl = normalizeUrl(
+      play.stream_url,
+      response.url
+    );
 
+    if (!streamUrl) {
+      console.log("Zenix : URL de flux invalide.");
+      return null;
+    }
 
-const clues = [
-  /INITIAL_PLAY/g,
-  /INITIAL_SOURCE_CHOICES/g,
-  /function\s+syncSources/g,
-  /fetch\s*\(/g,
-  /XMLHttpRequest/g,
-  /zx-frame/g,
-  /hls-proxy\.php/g,
-  /stream\.fluxora\.sbs/g
-];
+    const verified = await verifyMediaUrl(streamUrl);
 
-for (const pattern of clues) {
-  const matches = [...html.matchAll(pattern)];
-
-  console.log(
-    "ZENIX INDICE",
-    pattern.source,
-    "occurrences:",
-    matches.length,
-    "extraits:",
-    matches.slice(0, 3).map(m =>
-      html.slice(Math.max(0, m.index - 250), m.index + 900)
-        .replace(/\s+/g, " ")
-    )
-  );
-}
-
-
-    const candidates = extractCandidates(html, response.url);
-
-    console.log("Zenix Resolver :", {
-      status: response.status,
-      candidates: candidates.length
-    });
-
-    if (!candidates.length) {
-      console.log("Zenix Resolver : aucun flux direct trouvé dans le HTML accessible.");
+    if (!verified) {
+      console.log(
+        "Zenix : URL obtenue, mais média direct non confirmé."
+      );
       return null;
     }
 
     return {
-      url: candidates[0],
-      name: "Zenix — flux direct détecté",
-      description: `S${season}E${episode}`
+      url: streamUrl,
+      name: "Zenix — flux vérifié",
+      description: `VF — S${season}E${episode}`
     };
   } catch (error) {
     console.error("Zenix Resolver :", error.message);
