@@ -1,34 +1,27 @@
 
 const ZENIX_HOST = "https://fluxora.sbs";
 
-function normalizeUrl(value, baseUrl) {
+function normalizeUrl(value, baseUrl = ZENIX_HOST) {
   if (typeof value !== "string" || !value.trim()) {
     return null;
   }
 
   try {
-    const url = new URL(
-      value.replace(/\\\//g, "/").replace(/&amp;/g, "&"),
+    return new URL(
+      value.replace(/\\\//g, "/"),
       baseUrl
-    );
-
-    return url.protocol === "https:" ? url.href : null;
+    ).href;
   } catch {
     return null;
   }
 }
 
 function isDirectVideoUrl(value) {
-  try {
-    const url = new URL(value);
-
-    return (
-      url.protocol === "https:" &&
-      /\.(mp4|m3u8)$/i.test(url.pathname)
-    );
-  } catch {
+  if (typeof value !== "string") {
     return false;
   }
+
+  return /\.(mp4|m3u8)(?:[?#]|$)/i.test(value);
 }
 
 function extractInitialPlay(html) {
@@ -44,111 +37,72 @@ function extractInitialPlay(html) {
     return JSON.parse(match[1]);
   } catch (error) {
     console.log(
-      "Zenix : INITIAL_PLAY JSON invalide :",
+      "Zenix : impossible de lire INITIAL_PLAY :",
       error.message
     );
     return null;
   }
 }
 
+/*
+ * Diagnostic temporaire :
+ * récupère le HTML renvoyé par stream_url pour identifier
+ * l'iframe et les scripts du lecteur intégré.
+ *
+ * Cette fonction renvoie volontairement false :
+ * le HTML n'est pas un flux vidéo direct confirmé.
+ */
 async function verifyMediaUrl(url) {
   try {
     const response = await fetch(url, {
       headers: {
         "User-Agent": "Mozilla/5.0",
-        "Range": "bytes=0-1023"
+        "Range": "bytes=0-4095"
       },
       redirect: "follow",
       signal: AbortSignal.timeout(8000)
     });
 
-    const html = await response.text();
-
-console.log("Zenix HTML de stream_url :", {
-  url,
-  contentType: response.headers.get("content-type"),
-  debut: html.slice(0, 2500),
-  contientVideo: /<video\b/i.test(html),
-  contientIframe: /<iframe\b/i.test(html),
-  contientHls: /\.m3u8(?:[?#"']|$)/i.test(html),
-  contientMp4: /\.mp4(?:[?#"']|$)/i.test(html)
-});
-    if (!response.ok) {
-      console.log(
-        "Zenix : vérification du flux HTTP",
-        response.status
-      );
-      await response.body?.cancel();
-      return false;
-    }
-
     const contentType = (
       response.headers.get("content-type") || ""
     ).toLowerCase();
 
-    const reader = response.body?.getReader();
+    const html = await response.text();
 
-    if (!reader) {
+    console.log("Zenix HTML de stream_url :", {
+      status: response.status,
+      contentType,
+      urlFinale: response.url,
+      debut: html.slice(0, 5000),
+
+      iframes: [...html.matchAll(
+        /<iframe\b[^>]*>/gi
+      )]
+        .map(match => match[0])
+        .slice(0, 5),
+
+      scripts: [...html.matchAll(
+        /<script\b[^>]*src=["']([^"']+)["']/gi
+      )]
+        .map(match => match[1])
+        .slice(0, 10),
+
+      contientHls: /\.m3u8(?:[?#"'&]|$)/i.test(html),
+      contientMp4: /\.mp4(?:[?#"'&]|$)/i.test(html)
+    });
+
+    if (!response.ok) {
+      console.log(
+        "Zenix : réponse HTTP non valide :",
+        response.status
+      );
       return false;
     }
 
-    const chunks = [];
-    let total = 0;
-
-    try {
-      while (total < 1024) {
-        const { done, value } = await reader.read();
-
-        if (done) break;
-
-        chunks.push(value);
-        total += value.length;
-      }
-    } finally {
-      await reader.cancel().catch(() => {});
-    }
-
-    const bytes = new Uint8Array(total);
-    let offset = 0;
-
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.length;
-    }
-
-    const beginning = new TextDecoder()
-      .decode(bytes)
-      .trimStart();
-
-    const isHls =
-      beginning.startsWith("#EXTM3U") ||
-      contentType.includes("mpegurl");
-
-    const isMp4 =
-      contentType.includes("video/mp4") ||
-      (
-        bytes.length >= 8 &&
-        String.fromCharCode(...bytes.slice(4, 8)) === "ftyp"
-      );
-
-    const isVideoContentType =
-      contentType.startsWith("video/");
-
-    const verified = isHls || isMp4 || isVideoContentType;
-
-    console.log("Zenix : résultat vérification média", {
-      status: response.status,
-      contentType,
-      isHls,
-      isMp4,
-      isVideoContentType,
-      verified
-    });
-
-    return verified;
+    return false;
   } catch (error) {
     console.log(
-      "Zenix : vérification média impossible :",
+      "Zenix : erreur pendant l'analyse :",
       error.message
     );
 
@@ -161,15 +115,25 @@ async function resolveDirectStream({
   season,
   episode
 }) {
-  const pageUrl = new URL("/embed/zenix", ZENIX_HOST);
-
-  pageUrl.searchParams.set("tmdb", String(tmdbId));
-  pageUrl.searchParams.set("type", "tv");
-  pageUrl.searchParams.set("lang", "vf");
-  pageUrl.searchParams.set("season", String(season));
-  pageUrl.searchParams.set("episode", String(episode));
-
   try {
+    const params = new URLSearchParams({
+      tmdb: String(tmdbId),
+      type: "tv",
+      lang: "vf",
+      season: String(season),
+      episode: String(episode)
+    });
+
+    const pageUrl =
+      `${ZENIX_HOST}/embed/zenix?${params.toString()}`;
+
+    console.log("Zenix Resolver : analyse de", {
+      tmdbId,
+      season,
+      episode,
+      pageUrl
+    });
+
     const response = await fetch(pageUrl, {
       headers: {
         "User-Agent": "Mozilla/5.0",
@@ -180,7 +144,10 @@ async function resolveDirectStream({
     });
 
     if (!response.ok) {
-      console.log("Zenix : page HTTP", response.status);
+      console.log(
+        "Zenix Resolver : réponse HTTP",
+        response.status
+      );
       return null;
     }
 
@@ -199,20 +166,26 @@ async function resolveDirectStream({
 
     if (!play?.ok || !play.stream_url) {
       console.log(
-        "Zenix : aucun flux initial fourni pour cet épisode."
+        "Zenix Resolver : aucun stream_url exploitable."
       );
       return null;
     }
 
     const streamUrl = normalizeUrl(
       play.stream_url,
-      response.url
+      response.url || pageUrl
     );
 
     if (!streamUrl) {
-      console.log("Zenix : URL de flux invalide.");
+      console.log(
+        "Zenix Resolver : URL stream_url invalide."
+      );
       return null;
     }
+
+    console.log(
+      "Zenix : URL obtenue, analyse du lecteur intégré."
+    );
 
     const verified = await verifyMediaUrl(streamUrl);
 
@@ -223,13 +196,18 @@ async function resolveDirectStream({
       return null;
     }
 
+    // Le diagnostic actuel ne valide aucun flux direct.
     return {
       url: streamUrl,
       name: "Zenix — flux vérifié",
       description: `VF — S${season}E${episode}`
     };
   } catch (error) {
-    console.error("Zenix Resolver :", error.message);
+    console.log(
+      "Zenix Resolver : erreur :",
+      error.message
+    );
+
     return null;
   }
 }
