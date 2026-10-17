@@ -1,14 +1,19 @@
-
 const ZENIX_HOST = "https://fluxora.sbs";
+const UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+const DEBUG = process.env.DEBUG_ZENIX === "1";
+const MAX_DEPTH = 3;
+
+function log(...args) {
+  if (DEBUG) console.log("[Zenix]", ...args);
+}
 
 function normalizeUrl(value, baseUrl = ZENIX_HOST) {
-  if (typeof value !== "string" || !value.trim()) {
-    return null;
-  }
-
+  if (typeof value !== "string" || !value.trim()) return null;
   try {
     return new URL(
-      value.replace(/\\\//g, "/"),
+      value.trim().replace(/\\\//g, "/").replace(/\\u0026/g, "&"),
       baseUrl
     ).href;
   } catch {
@@ -17,163 +22,200 @@ function normalizeUrl(value, baseUrl = ZENIX_HOST) {
 }
 
 function isDirectVideoUrl(value) {
-  if (typeof value !== "string") {
-    return false;
-  }
-
-  return /\.(mp4|m3u8)(?:[?#]|$)/i.test(value);
+  return (
+    typeof value === "string" &&
+    /\.(mp4|m3u8)(?:[?#]|$)/i.test(value)
+  );
 }
 
 function extractInitialPlay(html) {
   const match = html.match(
-    /\bINITIAL_PLAY\s*=\s*(\{[\s\S]*?\}|null)\s*;/
+    /\bINITIAL_PLAY\s*=\s*(\{[\s\S]*?\})\s*;/
   );
-
-  if (!match || match[1] === "null") {
-    return null;
-  }
-
+  if (!match) return null;
   try {
     return JSON.parse(match[1]);
   } catch (error) {
-    console.log(
-      "Zenix : impossible de lire INITIAL_PLAY :",
-      error.message
-    );
+    log("INITIAL_PLAY illisible :", error.message);
     return null;
   }
 }
 
-/*
- * Diagnostic temporaire :
- * récupère le HTML renvoyé par stream_url pour identifier
- * l'iframe et les scripts du lecteur intégré.
- *
- * Cette fonction renvoie volontairement false :
- * le HTML n'est pas un flux vidéo direct confirmé.
- */
-async function verifyMediaUrl(url) {
+function findMediaUrls(text, baseUrl) {
+  const cleaned = text
+    .replace(/\\\//g, "/")
+    .replace(/\\u0026/g, "&")
+    .replace(/&amp;/g, "&");
+
+  const found = new Set();
+
+  const absolute =
+    /https?:\/\/[^\s"'`<>\\]+?\.(?:m3u8|mp4)(?:\?[^\s"'`<>\\]*)?/gi;
+  for (const m of cleaned.matchAll(absolute)) {
+    found.add(m[0]);
+  }
+
+  const relative =
+    /["'`]((?:\/|\.\/)[^"'`\s<>]+?\.(?:m3u8|mp4)[^"'`\s<>]*)["'`]/gi;
+  for (const m of cleaned.matchAll(relative)) {
+    const url = normalizeUrl(m[1], baseUrl);
+    if (url) found.add(url);
+  }
+
+  return [...found];
+}
+
+function findIframes(html, baseUrl) {
+  const urls = [];
+  for (const m of html.matchAll(
+    /<iframe\b[^>]*\bsrc=["']([^"']+)["']/gi
+  )) {
+    const url = normalizeUrl(m[1], baseUrl);
+    if (url) urls.push(url);
+  }
+  return urls;
+}
+
+function findScripts(html, baseUrl) {
+  const urls = [];
+  for (const m of html.matchAll(
+    /<script\b[^>]*\bsrc=["']([^"']+)["']/gi
+  )) {
+    const url = normalizeUrl(m[1], baseUrl);
+    if (url) urls.push(url);
+  }
+  return urls;
+}
+
+function headersFor(referer) {
+  const headers = { "User-Agent": UA, Accept: "*/*" };
+  if (referer) {
+    headers.Referer = referer;
+    try {
+      headers.Origin = new URL(referer).origin;
+    } catch {}
+  }
+  return headers;
+}
+
+async function isPlayable(url, referer) {
   try {
     const response = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        "Range": "bytes=0-4095"
-      },
+      headers: { ...headersFor(referer), Range: "bytes=0-2047" },
       redirect: "follow",
       signal: AbortSignal.timeout(8000)
     });
 
-    const contentType = (
-      response.headers.get("content-type") || ""
-    ).toLowerCase();
-
-    const html = await response.text();
-
-console.log("Zenix occurrences INITIAL_PLAY :", 
-  [...html.matchAll(/INITIAL_PLAY/g)]
-    .slice(0, 10)
-    .map(match => html.slice(
-      Math.max(0, match.index - 180),
-      Math.min(html.length, match.index + 450)
-    ))
-);
-
-console.log("Zenix références lecteur :", 
-  [...html.matchAll(
-    /(?:iframe|stream_url|embed-stream|hls-proxy|\.m3u8|\.mp4)/gi
-  )]
-    .slice(0, 20)
-    .map(match => html.slice(
-      Math.max(0, match.index - 100),
-      Math.min(html.length, match.index + 250)
-    ))
-);
-
-    console.log("Zenix HTML de stream_url :", {
-      status: response.status,
-      contentType,
-      urlFinale: response.url,
-      debut: html.slice(0, 5000),
-
-      iframes: [...html.matchAll(
-        /<iframe\b[^>]*>/gi
-      )]
-        .map(match => match[0])
-        .slice(0, 5),
-
-      scripts: [...html.matchAll(
-        /<script\b[^>]*src=["']([^"']+)["']/gi
-      )]
-        .map(match => match[1])
-        .slice(0, 10),
-
-      contientHls: /\.m3u8(?:[?#"'&]|$)/i.test(html),
-      contientMp4: /\.mp4(?:[?#"'&]|$)/i.test(html)
-    });
-
-    if (!response.ok) {
-      console.log(
-        "Zenix : réponse HTTP non valide :",
-        response.status
-      );
+    if (!response.ok && response.status !== 206) {
+      log("Média refusé :", response.status, url);
       return false;
     }
 
-    return false;
-  } catch (error) {
-    console.log(
-      "Zenix : erreur pendant l'analyse :",
-      error.message
-    );
+    const type = (
+      response.headers.get("content-type") || ""
+    ).toLowerCase();
 
+    if (/\.m3u8(?:[?#]|$)/i.test(url) || type.includes("mpegurl")) {
+      const body = await response.text();
+      return body.trimStart().startsWith("#EXTM3U");
+    }
+
+    return (
+      type.startsWith("video/") ||
+      type.includes("octet-stream") ||
+      type.includes("mp4")
+    );
+  } catch (error) {
+    log("Vérification impossible :", error.message);
     return false;
   }
 }
 
-async function inspectZenixGuestScript() {
-  const url =
-    `${ZENIX_HOST}/static/js/zenix-guest-watch.js`;
+async function crawl(url, referer, depth, seen) {
+  if (depth > MAX_DEPTH || seen.has(url)) return null;
+  seen.add(url);
+  log("Analyse", depth, url);
 
+  if (isDirectVideoUrl(url) && (await isPlayable(url, referer))) {
+    return { url, referer };
+  }
+
+  let response;
   try {
-    const response = await fetch(url, {
+    response = await fetch(url, {
       headers: {
-        "User-Agent": "Mozilla/5.0"
+        ...headersFor(referer),
+        Accept: "text/html,application/xhtml+xml,*/*"
       },
       redirect: "follow",
-      signal: AbortSignal.timeout(8000)
-    });
-
-    const js = await response.text();
-
-    console.log("Zenix guest-watch diagnostic :", {
-      status: response.status,
-      contentType: response.headers.get("content-type"),
-      longueur: js.length,
-      debut: js.slice(0, 12000),
-      references: [...js.matchAll(
-        /(?:iframe|src|stream_url|embed-stream|hls|m3u8|player|fetch|XMLHttpRequest)/gi
-      )]
-        .slice(0, 35)
-        .map(match => js.slice(
-          Math.max(0, match.index - 100),
-          Math.min(js.length, match.index + 250)
-        ))
+      signal: AbortSignal.timeout(10000)
     });
   } catch (error) {
-    console.log(
-      "Zenix guest-watch : erreur :",
-      error.message
-    );
+    log("Erreur réseau :", error.message);
+    return null;
   }
+
+  if (!response.ok) {
+    log("HTTP", response.status, url);
+    return null;
+  }
+
+  const finalUrl = response.url || url;
+  const type = (
+    response.headers.get("content-type") || ""
+  ).toLowerCase();
+
+  if (type.startsWith("video/") || type.includes("mpegurl")) {
+    return { url: finalUrl, referer };
+  }
+
+  const html = await response.text();
+  if (html.trimStart().startsWith("#EXTM3U")) {
+    return { url: finalUrl, referer };
+  }
+
+  // 1. Médias directs dans le HTML
+  for (const media of findMediaUrls(html, finalUrl)) {
+    if (await isPlayable(media, finalUrl)) {
+      log("Média trouvé :", media);
+      return { url: media, referer: finalUrl };
+    }
+  }
+
+  // 2. Iframes imbriquées
+  for (const frame of findIframes(html, finalUrl)) {
+    const result = await crawl(frame, finalUrl, depth + 1, seen);
+    if (result) return result;
+  }
+
+  // 3. Scripts du même domaine (3 maximum)
+  const origin = new URL(finalUrl).origin;
+  const scripts = findScripts(html, finalUrl)
+    .filter((s) => s.startsWith(origin))
+    .slice(0, 3);
+
+  for (const script of scripts) {
+    try {
+      const r = await fetch(script, {
+        headers: headersFor(finalUrl),
+        signal: AbortSignal.timeout(8000)
+      });
+      if (!r.ok) continue;
+      const js = await r.text();
+      for (const media of findMediaUrls(js, script)) {
+        if (await isPlayable(media, finalUrl)) {
+          return { url: media, referer: finalUrl };
+        }
+      }
+    } catch {}
+  }
+
+  log("Rien trouvé sur", finalUrl);
+  return null;
 }
 
-async function resolveDirectStream({
-  tmdbId,
-  season,
-  episode
-}) {
+async function resolveDirectStream({ tmdbId, season, episode }) {
   try {
-    await inspectZenixGuestScript();
     const params = new URLSearchParams({
       tmdb: String(tmdbId),
       type: "tv",
@@ -182,100 +224,83 @@ async function resolveDirectStream({
       episode: String(episode)
     });
 
-    const pageUrl =
-      `${ZENIX_HOST}/embed/zenix?${params.toString()}`;
-
-    console.log("Zenix Resolver : analyse de", {
-      tmdbId,
-      season,
-      episode,
-      pageUrl
-    });
+    const pageUrl = `${ZENIX_HOST}/embed/zenix?${params.toString()}`;
+    log("Page embed :", pageUrl);
 
     const response = await fetch(pageUrl, {
       headers: {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "text/html,application/xhtml+xml"
+        ...headersFor(ZENIX_HOST + "/"),
+        Accept: "text/html,application/xhtml+xml"
       },
       redirect: "follow",
       signal: AbortSignal.timeout(10000)
     });
 
     if (!response.ok) {
-      console.log(
-        "Zenix Resolver : réponse HTTP",
-        response.status
-      );
+      log("Embed HTTP", response.status);
       return null;
     }
 
     const html = await response.text();
+    const finalPage = response.url || pageUrl;
     const play = extractInitialPlay(html);
-console.log("Zenix diagnostic HTML :", {
-  status: response.status,
-  urlFinale: response.url,
-  longueurHTML: html.length,
-  contientInitialPlay: html.includes("INITIAL_PLAY"),
-  contientEmbedPlayer: html.includes("embed-player"),
-  debutHTML: html.slice(0, 1800),
-  declarationsInitialPlay: [
-    ...html.matchAll(/INITIAL_PLAY/g)
-  ].length
-});
-    console.log("Zenix INITIAL_PLAY :", {
+
+    log("INITIAL_PLAY :", {
       present: Boolean(play),
       ok: play?.ok,
       mode: play?.mode,
       provider: play?.provider,
-      source: play?.source,
-      lang: play?.lang,
       hasStreamUrl: Boolean(play?.stream_url)
     });
 
-    if (!play?.ok || !play.stream_url) {
-      console.log(
-        "Zenix Resolver : aucun stream_url exploitable."
-      );
+    const seen = new Set();
+    let result = null;
+
+    if (play?.ok && play.stream_url) {
+      const streamUrl = normalizeUrl(play.stream_url, finalPage);
+      if (streamUrl) {
+        result = await crawl(streamUrl, finalPage, 0, seen);
+      }
+    }
+
+    // Plan B : chercher directement dans la page embed
+    if (!result) {
+      for (const media of findMediaUrls(html, finalPage)) {
+        if (await isPlayable(media, finalPage)) {
+          result = { url: media, referer: finalPage };
+          break;
+        }
+      }
+    }
+
+    if (!result) {
+      log("Aucun flux direct exploitable.");
       return null;
     }
 
-    const streamUrl = normalizeUrl(
-      play.stream_url,
-      response.url || pageUrl
-    );
+    const referer = result.referer || finalPage;
+    let origin = ZENIX_HOST;
+    try {
+      origin = new URL(referer).origin;
+    } catch {}
 
-    if (!streamUrl) {
-      console.log(
-        "Zenix Resolver : URL stream_url invalide."
-      );
-      return null;
-    }
-
-    console.log(
-      "Zenix : URL obtenue, analyse du lecteur intégré."
-    );
-
-    const verified = await verifyMediaUrl(streamUrl);
-
-    if (!verified) {
-      console.log(
-        "Zenix : URL obtenue, mais média direct non confirmé."
-      );
-      return null;
-    }
-
-    // Le diagnostic actuel ne valide aucun flux direct.
     return {
-      url: streamUrl,
-      name: "Zenix — flux vérifié",
-      description: `VF — S${season}E${episode}`
+      url: result.url,
+      name: "Zenix",
+      description: `VF — S${season}E${episode}`,
+      behaviorHints: {
+        notWebReady: true,
+        proxyHeaders: {
+          request: {
+            Referer: referer,
+            Origin: origin,
+            "User-Agent": UA
+          }
+        }
+      }
     };
   } catch (error) {
-    console.log(
-      "Zenix Resolver : erreur :",
-      error.message
-    );
-
+    console.error("Zenix Resolver : erreur :", error.message);
     return null;
   }
 }
