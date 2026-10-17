@@ -72,31 +72,38 @@ async function resolveDirectStream({ tmdbId, season, episode }) {
     });
 
     if (!response.ok) {
-      console.log("Zenix Resolver : HTTP", response.status);
-      return null;
-    }
+    const iframeMatches = [
+  ...html.matchAll(/<iframe\b[^>]*>/gi)
+].map(match => match[0]);
 
-    const html = await response.text();
-    const candidates = extractCandidates(html, response.url);
+console.log("ZENIX IFRAMES :", iframeMatches.map(tag => {
+  const src = tag.match(/\bsrc=["']([^"']*)["']/i);
+  return src ? src[1] : "(src absent)";
+}));
 
-console.log("ZENIX HTML DEBUG :", {
-  length: html.length,
-  hasVideo: /<video\b/i.test(html),
-  hasIframe: /<iframe\b/i.test(html),
-  hasM3u8: /\.m3u8/i.test(html),
-  hasMp4: /\.mp4/i.test(html),
-  hasPlayer: /player|source|stream|iframe/i.test(html)
-});
+const clues = [
+  /hls-proxy\.php/ig,
+  /stream\.fluxora\.sbs/ig,
+  /player\.zxcstream\.xyz/ig,
+  /\.m3u8/ig,
+  /\.mp4/ig,
+  /(?:file|source|streamUrl|videoUrl)\s*[:=]/ig
+];
 
-console.log(
-  "ZENIX HTML EXTRAIT :",
-  html.slice(0, 1500)
-);
-
-    console.log("Zenix Resolver :", {
-      status: response.status,
-      candidates: candidates.length
-    });
+for (const pattern of clues) {
+  const matches = [...html.matchAll(pattern)];
+  console.log(
+    "ZENIX INDICE",
+    pattern.source,
+    "occurrences:",
+    matches.length,
+    "extraits:",
+    matches.slice(0, 5).map(m =>
+      html.slice(Math.max(0, m.index - 100), m.index + 220)
+        .replace(/\s+/g, " ")
+    )
+  );
+}
 
     if (candidates.length === 0) return null;
 
