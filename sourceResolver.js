@@ -2,23 +2,12 @@
 const ZENIX_HOST = "https://fluxora.sbs";
 
 function isDirectVideoUrl(value) {
-  if (typeof value !== "string") return false;
-
   try {
     const url = new URL(value);
-
-    if (url.protocol !== "https:") return false;
-
-    // N'accepte que des URL hébergées sur des domaines publics.
-    if (
-      url.hostname === "localhost" ||
-      url.hostname.endsWith(".localhost") ||
-      url.hostname.endsWith(".local")
-    ) {
-      return false;
-    }
-
-    return /\.(mp4|m3u8)$/i.test(url.pathname);
+    return (
+      url.protocol === "https:" &&
+      /\.(mp4|m3u8)$/i.test(url.pathname)
+    );
   } catch {
     return false;
   }
@@ -27,7 +16,6 @@ function isDirectVideoUrl(value) {
 function extractCandidates(html, pageUrl) {
   const candidates = new Set();
 
-  // Recherche les URL directes présentes dans le HTML accessible.
   const patterns = [
     /https?:\\?\/\\?\/[^"'\\\s<>]+?\.(?:mp4|m3u8)(?:\?[^"'\\\s<>]*)?/gi,
     /["'](?:file|src|url|streamUrl|videoUrl)["']\s*:\s*["']([^"']+)["']/gi
@@ -42,9 +30,11 @@ function extractCandidates(html, pageUrl) {
 
       try {
         const absolute = new URL(raw, pageUrl).href;
-        if (isDirectVideoUrl(absolute)) candidates.add(absolute);
+        if (isDirectVideoUrl(absolute)) {
+          candidates.add(absolute);
+        }
       } catch {
-        // Ignore les valeurs qui ne sont pas des URL.
+        // Ignore les URL invalides.
       }
     }
   }
@@ -54,7 +44,6 @@ function extractCandidates(html, pageUrl) {
 
 async function resolveDirectStream({ tmdbId, season, episode }) {
   const pageUrl = new URL("/embed/zenix", ZENIX_HOST);
-
   pageUrl.searchParams.set("tmdb", String(tmdbId));
   pageUrl.searchParams.set("type", "tv");
   pageUrl.searchParams.set("lang", "vf");
@@ -72,40 +61,60 @@ async function resolveDirectStream({ tmdbId, season, episode }) {
     });
 
     if (!response.ok) {
+      console.log("Zenix Resolver : HTTP", response.status);
+      return null;
+    }
+
+    const html = await response.text();
+    const candidates = extractCandidates(html, response.url);
+
     const iframeMatches = [
-  ...html.matchAll(/<iframe\b[^>]*>/gi)
-].map(match => match[0]);
+      ...html.matchAll(/<iframe\b[^>]*>/gi)
+    ].map(match => {
+      const src = match[0].match(/\bsrc=["']([^"']*)["']/i);
+      return src ? src[1] : "(src absent)";
+    });
 
-console.log("ZENIX IFRAMES :", iframeMatches.map(tag => {
-  const src = tag.match(/\bsrc=["']([^"']*)["']/i);
-  return src ? src[1] : "(src absent)";
-}));
+    console.log("ZENIX HTML DEBUG :", {
+      length: html.length,
+      hasVideo: /<video\b/i.test(html),
+      hasIframe: /<iframe\b/i.test(html),
+      hasM3u8: /\.m3u8/i.test(html),
+      hasMp4: /\.mp4/i.test(html)
+    });
 
-const clues = [
-  /hls-proxy\.php/ig,
-  /stream\.fluxora\.sbs/ig,
-  /player\.zxcstream\.xyz/ig,
-  /\.m3u8/ig,
-  /\.mp4/ig,
-  /(?:file|source|streamUrl|videoUrl)\s*[:=]/ig
-];
+    console.log("ZENIX IFRAMES :", iframeMatches);
 
-for (const pattern of clues) {
-  const matches = [...html.matchAll(pattern)];
-  console.log(
-    "ZENIX INDICE",
-    pattern.source,
-    "occurrences:",
-    matches.length,
-    "extraits:",
-    matches.slice(0, 5).map(m =>
-      html.slice(Math.max(0, m.index - 100), m.index + 220)
-        .replace(/\s+/g, " ")
-    )
-  );
-}
+    const clues = [
+      /hls-proxy\.php/ig,
+      /stream\.fluxora\.sbs/ig,
+      /player\.zxcstream\.xyz/ig,
+      /\.m3u8/ig,
+      /\.mp4/ig,
+      /(?:file|source|streamUrl|videoUrl)\s*[:=]/ig
+    ];
 
-    if (candidates.length === 0) return null;
+    for (const pattern of clues) {
+      const matches = [...html.matchAll(pattern)];
+      console.log(
+        "ZENIX INDICE",
+        pattern.source,
+        "occurrences:",
+        matches.length,
+        "extraits:",
+        matches.slice(0, 5).map(m =>
+          html.slice(Math.max(0, m.index - 100), m.index + 220)
+            .replace(/\s+/g, " ")
+        )
+      );
+    }
+
+    console.log("Zenix Resolver :", {
+      status: response.status,
+      candidates: candidates.length
+    });
+
+    if (!candidates.length) return null;
 
     return {
       url: candidates[0],
