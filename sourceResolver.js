@@ -1,4 +1,3 @@
-
 const ZENIX_HOST = "https://fluxora.sbs";
 
 function isDirectVideoUrl(value) {
@@ -66,51 +65,31 @@ async function resolveDirectStream({ tmdbId, season, episode }) {
     }
 
     const html = await response.text();
+
+    // Diagnostic des éléments du lecteur et des sources.
+    const iframeMatches = [
+      ...html.matchAll(/<iframe\b[^>]*>/gi)
+    ].map(match => match[0]);
+
+    console.log("ZENIX IFRAMES COMPLETS :", iframeMatches);
+
     for (const term of [
-  "INITIAL_PLAY",
-  "INITIAL_SOURCE_CHOICES",
-  "function syncSources",
-  "function nextSmartlinkUrl",
-  "hls-proxy.php",
-  "createElement('iframe')",
-  'createElement("iframe")'
-]) {
-  const index = html.indexOf(term);
+      "INITIAL_PLAY",
+      "INITIAL_SOURCE_CHOICES",
+      "function syncSources",
+      "zx-frame"
+    ]) {
+      const index = html.indexOf(term);
 
-  console.log(
-    "ZENIX SOURCE DEBUG",
-    term,
-    index,
-    index >= 0
-      ? html.slice(Math.max(0, index - 300), index + 1800)
-      : "introuvable"
-  );
-}
-    const candidates = extractCandidates(html, response.url);
-
-const iframeMatches = [
-  ...html.matchAll(/<iframe\b[^>]*>/gi)
-].map(match => match[0]);
-for (const term of [
-  "INITIAL_SOURCE_CHOICES",
-  "function syncSources",
-  "zx-frame",
-  "INITIAL_PLAY"
-]) {
-  const index = html.indexOf(term);
-
-  console.log(
-    "ZENIX SOURCE DEBUG",
-    term,
-    index,
-    index >= 0
-      ? html.slice(Math.max(0, index - 500), index + 3500)
-      : "introuvable"
-  );
-}
-console.log("ZENIX IFRAMES COMPLETS :", iframeMatches);
-    
-    });
+      console.log(
+        "ZENIX SOURCE DEBUG",
+        term,
+        index,
+        index >= 0
+          ? html.slice(Math.max(0, index - 300), index + 1800)
+          : "introuvable"
+      );
+    }
 
     console.log("ZENIX HTML DEBUG :", {
       length: html.length,
@@ -119,8 +98,6 @@ console.log("ZENIX IFRAMES COMPLETS :", iframeMatches);
       hasM3u8: /\.m3u8/i.test(html),
       hasMp4: /\.mp4/i.test(html)
     });
-
-    console.log("ZENIX IFRAMES :", iframeMatches);
 
     const clues = [
       /hls-proxy\.php/ig,
@@ -133,6 +110,7 @@ console.log("ZENIX IFRAMES COMPLETS :", iframeMatches);
 
     for (const pattern of clues) {
       const matches = [...html.matchAll(pattern)];
+
       console.log(
         "ZENIX INDICE",
         pattern.source,
@@ -146,12 +124,17 @@ console.log("ZENIX IFRAMES COMPLETS :", iframeMatches);
       );
     }
 
+    const candidates = extractCandidates(html, response.url);
+
     console.log("Zenix Resolver :", {
       status: response.status,
       candidates: candidates.length
     });
 
-    if (!candidates.length) return null;
+    if (!candidates.length) {
+      console.log("Zenix Resolver : aucun flux direct trouvé dans le HTML accessible.");
+      return null;
+    }
 
     return {
       url: candidates[0],
