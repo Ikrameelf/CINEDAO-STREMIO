@@ -271,80 +271,58 @@ builder.defineStreamHandler(async ({ type, id }) => {
       tmdbId = tmdbEpisode[1];
     } else {
       const resolved = await resolveId("series", imdbEpisode[1]);
-
-      if (!resolved) {
-        return { streams: [] };
-      }
-
+      if (!resolved) return { streams: [] };
       tmdbId = resolved.tmdbId;
     }
 
-// Recherche un flux direct exposé par la page Zenix.
-const directStream = await resolveDirectStream({
-  tmdbId,
-  season,
-  episode
-});
+    const streams = [];
 
-if (directStream?.url) {
-  console.log("Zenix : flux direct détecté.");
-
-  return {
-    streams: [{
-      name: directStream.name,
-      description: directStream.description,
-      url: directStream.url
-    }]
-  };
-}
-
-console.log(
-  "Zenix Resolver : aucun flux direct trouvé dans le HTML accessible."
-);
-    // Vérifie la disponibilité VF avant de proposer le lecteur Zenix.
-    const availabilityUrl = new URL(
-      "https://fluxora.sbs/api/embed-player/availability"
-    );
-
-    availabilityUrl.searchParams.set("tmdb", tmdbId);
-    availabilityUrl.searchParams.set("type", "tv");
-    availabilityUrl.searchParams.set("season", String(season));
-    availabilityUrl.searchParams.set("episode", String(episode));
-
-    const response = await fetch(availabilityUrl, {
-      signal: AbortSignal.timeout(10000)
-    });
-
-    if (!response.ok) {
-      throw new Error(`Zenix Availability HTTP ${response.status}`);
-    }
-
-    const availability = await response.json();
-
-    console.log("Disponibilité Zenix :", {
+    // 1. Flux direct (lecteur interne de Stremio)
+    const directStream = await resolveDirectStream({
       tmdbId,
       season,
-      episode,
-      available: availability.available,
-      vf: availability.vf,
-      pending: availability.pending
+      episode
     });
 
-    if (availability.ok !== true) {
-  console.log("Zenix non proposé : réponse API invalide.");
-  return { streams: [] };
-}
+    if (directStream?.url) {
+      console.log("Zenix : flux direct détecté.");
+      streams.push({
+        name: directStream.name,
+        description: directStream.description,
+        url: directStream.url,
+        behaviorHints: directStream.behaviorHints
+      });
+    } else {
+      console.log("Zenix : aucun flux direct, repli sur lien externe.");
+    }
 
-const vfConfirmee =
-  availability.available === true &&
-  availability.vf === true &&
-  availability.pending !== true;
+    // 2. Lien externe (repli, jamais bloquant)
+    let vfConfirmee = false;
 
-console.log(
-  vfConfirmee
-    ? "Zenix : VF confirmée."
-    : "Zenix : disponibilité non confirmée, lien proposé pour test."
-);
+    try {
+      const availabilityUrl = new URL(
+        "https://fluxora.sbs/api/embed-player/availability"
+      );
+      availabilityUrl.searchParams.set("tmdb", tmdbId);
+      availabilityUrl.searchParams.set("type", "tv");
+      availabilityUrl.searchParams.set("season", String(season));
+      availabilityUrl.searchParams.set("episode", String(episode));
+
+      const response = await fetch(availabilityUrl, {
+        signal: AbortSignal.timeout(10000)
+      });
+
+      if (response.ok) {
+        const availability = await response.json();
+        vfConfirmee =
+          availability.ok === true &&
+          availability.available === true &&
+          availability.vf === true &&
+          availability.pending !== true;
+      }
+    } catch (error) {
+      console.log("Disponibilité Zenix indisponible :", error.message);
+    }
 
     const params = new URLSearchParams({
       tmdb: tmdbId,
@@ -354,20 +332,19 @@ console.log(
       episode: String(episode)
     });
 
-    return {
-      streams: [{
-        name: "Zenix",
-        description: `${vfConfirmee ? "VF confirmée" : "Disponibilité à vérifier"} — S${season}E${episode} — lecteur externe`,
-        externalUrl: `https://fluxora.sbs/embed/zenix?${params.toString()}`
-      }]
-    };
+    streams.push({
+      name: "Zenix (navigateur)",
+      description: `${vfConfirmee ? "VF confirmée" : "Disponibilité à vérifier"} — S${season}E${episode} — lecteur externe`,
+      externalUrl: `https://fluxora.sbs/embed/zenix?${params.toString()}`
+    });
+
+    return { streams };
   } catch (error) {
     console.error("Erreur de flux :", error.message);
     return { streams: [] };
   }
 });
 
-const addonInterface = builder.getInterface();
 serveHTTP(builder.getInterface(), { port: PORT });
 
 console.log(`Cinema Addon démarré sur le port ${PORT}`);
