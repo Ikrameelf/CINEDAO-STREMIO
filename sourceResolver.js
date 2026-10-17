@@ -66,6 +66,25 @@ async function resolveDirectStream({ tmdbId, season, episode }) {
 
     const html = await response.text();
 
+for (const term of [
+  "frame.src",
+  "frame.setAttribute",
+  "INITIAL_SOURCE_STREAMS",
+  "api/embed-player/",
+  "function syncSources"
+]) {
+  const index = html.indexOf(term);
+
+  console.log(
+    "ZENIX INIT",
+    term,
+    index,
+    index >= 0
+      ? html.slice(Math.max(0, index - 700), index + 2500)
+      : "introuvable"
+  );
+}
+
     // Diagnostic des éléments du lecteur et des sources.
     const iframeMatches = [
       ...html.matchAll(/<iframe\b[^>]*>/gi)
