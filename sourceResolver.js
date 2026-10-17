@@ -66,6 +66,28 @@ async function resolveDirectStream({ tmdbId, season, episode }) {
 
     const html = await response.text();
 
+const playMatch = html.match(/\bINITIAL_PLAY\s*=\s*(\{[\s\S]*?\})\s*;/);
+
+if (playMatch) {
+  try {
+    const play = JSON.parse(playMatch[1]);
+
+    console.log("ZENIX INITIAL_PLAY :", {
+      ok: play.ok,
+      mode: play.mode,
+      provider: play.provider,
+      source: play.source,
+      lang: play.lang,
+      stream_url: play.stream_url,
+      sources: play.sources
+    });
+  } catch (error) {
+    console.log("ZENIX INITIAL_PLAY : JSON invalide", error.message);
+  }
+} else {
+  console.log("ZENIX INITIAL_PLAY : introuvable");
+}
+
 for (const term of [
   "frame.src",
   "frame.setAttribute",
