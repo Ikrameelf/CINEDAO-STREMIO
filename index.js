@@ -6,8 +6,7 @@ const PORT = process.env.PORT || 10000;
 const TMDB = "https://api.themoviedb.org/3";
 const IMG = "https://image.tmdb.org/t/p/w500";
 const BACKDROP = "https://image.tmdb.org/t/p/w1280";
-const { resolveDirectStream } = require("./sourceResolver");
-const manifest = {
+const { resolveDirectStream, getTrace } = require("./sourceResolver");const manifest = {
   id: "fr.cinema.addon",
   version: "1.1.0",
   name: "Cinema Addon",
@@ -295,7 +294,12 @@ builder.defineStreamHandler(async ({ type, id }) => {
     } else {
       console.log("Zenix : aucun flux direct, repli sur lien externe.");
     }
-
+    // DIAGNOSTIC TEMPORAIRE : à supprimer une fois le problème réglé
+    streams.push({
+      name: "Zenix DEBUG",
+      description: getTrace().join("\n").slice(0, 3500),
+      externalUrl: "https://fluxora.sbs/"
+    });
     // 2. Lien externe (repli, jamais bloquant)
     let vfConfirmee = false;
 
