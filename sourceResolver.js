@@ -62,6 +62,17 @@ async function verifyMediaUrl(url) {
       signal: AbortSignal.timeout(8000)
     });
 
+    const html = await response.text();
+
+console.log("Zenix HTML de stream_url :", {
+  url,
+  contentType: response.headers.get("content-type"),
+  debut: html.slice(0, 2500),
+  contientVideo: /<video\b/i.test(html),
+  contientIframe: /<iframe\b/i.test(html),
+  contientHls: /\.m3u8(?:[?#"']|$)/i.test(html),
+  contientMp4: /\.mp4(?:[?#"']|$)/i.test(html)
+});
     if (!response.ok) {
       console.log(
         "Zenix : vérification du flux HTTP",
