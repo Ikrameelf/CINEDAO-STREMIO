@@ -295,18 +295,6 @@ builder.defineStreamHandler(async ({ type, id }) => {
       console.log("Zenix : aucun flux direct, repli sur lien externe.");
     }
 
-    // DIAGNOSTIC TEMPORAIRE : à supprimer une fois le problème réglé
-    const debugText = getTrace().join("\n");
-    for (let i = 0; i < 3; i++) {
-      const part = debugText.slice(i * 3500, (i + 1) * 3500);
-      if (!part) break;
-      streams.push({
-        name: `Zenix DEBUG ${i + 1}`,
-        description: part,
-        externalUrl: "https://fluxora.sbs/"
-      });
-    }
-
     // 2. Lien externe (repli, jamais bloquant)
     let vfConfirmee = false;
 
