@@ -88,11 +88,28 @@ async function resolveDirectStream({ tmdbId, season, episode }) {
 }
     const candidates = extractCandidates(html, response.url);
 
-    const iframeMatches = [
-      ...html.matchAll(/<iframe\b[^>]*>/gi)
-    ].map(match => {
-      const src = match[0].match(/\bsrc=["']([^"']*)["']/i);
-      return src ? src[1] : "(src absent)";
+const iframeMatches = [
+  ...html.matchAll(/<iframe\b[^>]*>/gi)
+].map(match => match[0]);
+for (const term of [
+  "INITIAL_SOURCE_CHOICES",
+  "function syncSources",
+  "zx-frame",
+  "INITIAL_PLAY"
+]) {
+  const index = html.indexOf(term);
+
+  console.log(
+    "ZENIX SOURCE DEBUG",
+    term,
+    index,
+    index >= 0
+      ? html.slice(Math.max(0, index - 500), index + 3500)
+      : "introuvable"
+  );
+}
+console.log("ZENIX IFRAMES COMPLETS :", iframeMatches);
+    
     });
 
     console.log("ZENIX HTML DEBUG :", {
