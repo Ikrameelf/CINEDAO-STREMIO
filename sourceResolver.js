@@ -173,6 +173,7 @@ async function resolveDirectStream({
   episode
 }) {
   try {
+    await inspectZenixGuestScript();
     const params = new URLSearchParams({
       tmdb: String(tmdbId),
       type: "tv",
