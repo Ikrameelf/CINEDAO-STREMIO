@@ -198,9 +198,22 @@ builder.defineMetaHandler(async ({ type, id }) => {
 });
 
 builder.defineStreamHandler(async ({ type, id }) => {
-  // Les flux seront ajoutés dans des modules indépendants
-  // après vérification de leur compatibilité et autorisation.
   console.log("Demande de flux :", type, id);
+
+  const parts = String(id).split(":");
+
+  if (type === "series" && parts.length >= 3) {
+    const episodeId = parts[0];
+    const season = Number(parts[1]);
+    const episode = Number(parts[2]);
+
+    console.log("Épisode demandé :", {
+      episodeId,
+      season,
+      episode
+    });
+  }
+
   return { streams: [] };
 });
 
