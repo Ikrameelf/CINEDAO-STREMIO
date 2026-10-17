@@ -79,6 +79,20 @@ async function resolveDirectStream({ tmdbId, season, episode }) {
     const html = await response.text();
     const candidates = extractCandidates(html, response.url);
 
+console.log("ZENIX HTML DEBUG :", {
+  length: html.length,
+  hasVideo: /<video\b/i.test(html),
+  hasIframe: /<iframe\b/i.test(html),
+  hasM3u8: /\.m3u8/i.test(html),
+  hasMp4: /\.mp4/i.test(html),
+  hasPlayer: /player|source|stream|iframe/i.test(html)
+});
+
+console.log(
+  "ZENIX HTML EXTRAIT :",
+  html.slice(0, 1500)
+);
+
     console.log("Zenix Resolver :", {
       status: response.status,
       candidates: candidates.length
