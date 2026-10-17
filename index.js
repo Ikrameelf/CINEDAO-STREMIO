@@ -337,15 +337,21 @@ builder.defineStreamHandler(async ({ type, id }) => {
       pending: availability.pending
     });
 
-    if (
-      availability.ok !== true ||
-      availability.available !== true ||
-      availability.vf !== true ||
-      availability.pending === true
-    ) {
-      console.log("Zenix non proposé : VF non confirmée.");
-      return { streams: [] };
-    }
+    if (availability.ok !== true) {
+  console.log("Zenix non proposé : réponse API invalide.");
+  return { streams: [] };
+}
+
+const vfConfirmee =
+  availability.available === true &&
+  availability.vf === true &&
+  availability.pending !== true;
+
+console.log(
+  vfConfirmee
+    ? "Zenix : VF confirmée."
+    : "Zenix : disponibilité non confirmée, lien proposé pour test."
+);
 
     const params = new URLSearchParams({
       tmdb: tmdbId,
@@ -358,7 +364,7 @@ builder.defineStreamHandler(async ({ type, id }) => {
     return {
       streams: [{
         name: "Zenix",
-        description: `VF confirmée — S${season}E${episode} — lecteur externe`,
+        description: `${vfConfirmee ? "VF confirmée" : "Disponibilité à vérifier"} — S${season}E${episode} — lecteur externe`,
         externalUrl: `https://fluxora.sbs/embed/zenix?${params.toString()}`
       }]
     };
