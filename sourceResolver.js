@@ -130,6 +130,43 @@ console.log("Zenix références lecteur :",
   }
 }
 
+async function inspectZenixGuestScript() {
+  const url =
+    `${ZENIX_HOST}/static/js/zenix-guest-watch.js`;
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0"
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(8000)
+    });
+
+    const js = await response.text();
+
+    console.log("Zenix guest-watch diagnostic :", {
+      status: response.status,
+      contentType: response.headers.get("content-type"),
+      longueur: js.length,
+      debut: js.slice(0, 12000),
+      references: [...js.matchAll(
+        /(?:iframe|src|stream_url|embed-stream|hls|m3u8|player|fetch|XMLHttpRequest)/gi
+      )]
+        .slice(0, 35)
+        .map(match => js.slice(
+          Math.max(0, match.index - 100),
+          Math.min(js.length, match.index + 250)
+        ))
+    });
+  } catch (error) {
+    console.log(
+      "Zenix guest-watch : erreur :",
+      error.message
+    );
+  }
+}
+
 async function resolveDirectStream({
   tmdbId,
   season,
